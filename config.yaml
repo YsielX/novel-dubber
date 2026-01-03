@@ -1,0 +1,86 @@
+llm:
+  endpoint: "https://aihubmix.com/v1"
+  api_key_env: "OPENAI_API_KEY"
+  model: "gpt-5.2"
+  timeout_sec: 240
+  temperature: 0.2
+  max_retries: 2
+  max_tokens: 0
+  chat_log: "work/llm_chat.jsonl"
+
+asr:
+  backend: "command"
+  command_template: "python3 scripts/asr_faster_whisper.py --audio {audio} --out {out} --language {language} --device cpu --model small --compute-type int8 --word-timestamps"
+  device: "cpu"
+  word_timestamps: true
+
+
+diarization:
+  backend: "command"
+  command_template: "python3 scripts/diarize_simple.py --audio {audio} --out {out} --device cuda --vad-level 3 --min-speech-sec 0.2 --max-gap-sec 0.2 --window-sec 2.0 --step-sec 1.0 --min-window-sec 0.8 --distance-threshold 0.75"
+  overlap_threshold: 0.25
+  enabled: false
+
+
+audio:
+  sample_rate: 16000
+  chunk_sec: 1800
+  min_segment_sec: 1.0
+  max_segment_sec: 12.0
+  merge_pause_sec: 0.35
+  max_pause_sec: 2.0
+
+labeling:
+  mode: "windowed"
+  window_size: 56
+  window_overlap: 20
+  character_list_path: ""
+
+character_discovery:
+  window_size: 200
+  window_overlap: 0
+
+alignment:
+  search_window: 120
+  max_combine: 30
+  min_score: 0.55
+  advance_on_miss: 0
+  offset_window_segments: 20
+  offset_search_words: 400
+  use_kana: true
+
+voice_refs:
+  min_sec: 3.0
+  max_sec: 10.0
+  preferred_min_sec: 5.0
+  preferred_max_sec: 9.0
+  max_refs_per_character: 3
+
+text_dub:
+  default_pause_sec: 0.5
+  punctuation_pause_sec:
+    ".": 0.6
+    "?": 0.7
+    "!": 0.7
+    ",": 0.3
+  quote_pause_sec: 0.2
+
+translation:
+  glossary_path: ""
+  mode: "windowed"
+  window_size: 56
+  window_overlap: 20
+
+
+tts:
+  mode: "http"
+  http:
+    endpoint: "http://localhost:9880/tts"
+    json_body_template:
+      text: "{text}"
+      text_lang: "{target_lang}"
+      ref_audio_path: "{ref_audio}"
+      prompt_text: "{ref_text}"
+      prompt_lang: "ja"
+  cli:
+    command_template: "gpt_sovits_cli --text-file {text_file} --ref-audio {ref_audio} --ref-text {ref_text} --out {out} --lang {target_lang}"

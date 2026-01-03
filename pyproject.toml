@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "novel-dubber"
+version = "0.1.0"
+description = "CLI tool to dub audiobooks using ASR, diarization, LLM, and GPT-SoVITS"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "Codex"}]
+license = {text = "MIT"}
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License"
+]
+dependencies = [
+  "typer>=0.12.3",
+  "rich>=13.7.1",
+  "tqdm>=4.66.4",
+  "pyyaml>=6.0.1",
+  "requests>=2.32.3",
+  "openai>=1.40.0",
+  "pykakasi>=2.3.0"
+]
+
+[project.scripts]
+novel_dubber = "novel_dubber.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

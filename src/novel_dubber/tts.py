@@ -305,6 +305,16 @@ def synthesize_segments(
             continue
 
         ref_audio = _prepare_ref_audio(ref_audio, out_dir.parent / "tts_ref_cache")
+        ref_audio = normalize_path(Path(ref_audio))
+        if not Path(ref_audio).exists():
+            err = RuntimeError(f"Ref audio not found: {ref_audio}")
+            _log_tts_error(out_dir, seg, ref_audio, ref_text, err)
+            _write_silence(
+                out_path,
+                _infer_silence_duration(seg, config),
+                config.audio.sample_rate,
+            )
+            continue
 
         text = str(seg.get("translation", seg.get("text", ""))).strip()
         text = _sanitize_tts_text(text)

@@ -69,6 +69,7 @@ def translate_segments(
     segments = read_jsonl(segments_path)
     existing = read_jsonl(out_path) if out_path.exists() else []
     done_ids = {seg.get("segment_id") for seg in existing}
+    errors_path = out_path.with_name("translation_errors.jsonl")
 
     glossary = None
     if config.translation.glossary_path:
@@ -77,7 +78,6 @@ def translate_segments(
             glossary = read_json(glossary_path)
 
     if config.translation.mode.lower() != "windowed":
-        results: List[Dict[str, object]] = []
         for seg in tqdm(segments, desc="Translating", unit="segment"):
             seg_id = seg.get("segment_id")
             if seg_id in done_ids:
@@ -95,24 +95,34 @@ def translate_segments(
                     ),
                 },
             ]
-            llm_out = call_llm_json(config, messages)
+            try:
+                llm_out = call_llm_json(config, messages)
+            except Exception as exc:
+                logger.warning("Translation failed for %s: %s", seg_id, exc)
+                append_jsonl(
+                    errors_path,
+                    [
+                        {
+                            "segment_id": seg_id,
+                            "error": str(exc),
+                        }
+                    ],
+                )
+                continue
             translation = str(llm_out.get("translation", ""))
             out = dict(seg)
             out.update({"translation": translation, "target_lang": target_lang})
-            results.append(out)
+            append_jsonl(out_path, [out])
+            done_ids.add(seg_id)
 
-        if results:
-            append_jsonl(out_path, results)
-        else:
-            if not out_path.exists():
-                out_path.touch()
+        if not out_path.exists():
+            out_path.touch()
         return out_path
 
     window_size = max(1, config.translation.window_size)
     overlap = max(0, config.translation.window_overlap)
     step = max(1, window_size - overlap)
 
-    results: List[Dict[str, object]] = []
     for start in tqdm(range(0, len(segments), step), desc="Translating", unit="window"):
         window = segments[start : start + window_size]
         if not window:
@@ -137,11 +147,26 @@ def translate_segments(
                 "content": _user_prompt_window(payload, target_lang, glossary),
             },
         ]
-        llm_out = call_llm_json(config, messages)
+        try:
+            llm_out = call_llm_json(config, messages)
+        except Exception as exc:
+            logger.warning("Translation window failed at %s: %s", start, exc)
+            append_jsonl(
+                errors_path,
+                [
+                    {
+                        "window_start": start,
+                        "segment_ids": [seg.get("segment_id") for seg in window],
+                        "error": str(exc),
+                    }
+                ],
+            )
+            continue
         items = llm_out.get("segments", [])
         if not isinstance(items, list):
             continue
 
+        window_results: List[Dict[str, object]] = []
         for item in items:
             seg_id = item.get("segment_id")
             if seg_id in done_ids or not seg_id:
@@ -152,12 +177,12 @@ def translate_segments(
             translation = str(item.get("translation", ""))
             out = dict(base)
             out.update({"translation": translation, "target_lang": target_lang})
-            results.append(out)
+            window_results.append(out)
             done_ids.add(seg_id)
 
-    if results:
-        append_jsonl(out_path, results)
-    else:
-        if not out_path.exists():
-            out_path.touch()
+        if window_results:
+            append_jsonl(out_path, window_results)
+
+    if not out_path.exists():
+        out_path.touch()
     return out_path

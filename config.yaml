@@ -10,8 +10,8 @@ llm:
 
 asr:
   backend: "command"
-  command_template: "python3 scripts/asr_faster_whisper.py --audio {audio} --out {out} --language {language} --device cpu --model small --compute-type int8 --word-timestamps"
-  device: "cpu"
+  command_template: "python3 scripts/asr_faster_whisper.py --audio {audio} --out {out} --language {language} --device cuda --model small --compute-type float16 --word-timestamps"
+  device: "cuda"
   word_timestamps: true
 
 

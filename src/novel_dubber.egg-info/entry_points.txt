@@ -1,2 +1,0 @@
-[console_scripts]
-novel_dubber = novel_dubber.cli:app

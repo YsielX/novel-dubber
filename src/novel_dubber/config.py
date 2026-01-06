@@ -93,6 +93,7 @@ class TranslationConfig:
     mode: str = "per_segment"
     window_size: int = 12
     window_overlap: int = 4
+    enabled: bool = True
 
 
 @dataclass
@@ -114,6 +115,16 @@ class TTSConfig:
 
 
 @dataclass
+class VoiceAssignConfig:
+    catalog_path: str = "voices/catalog.yaml"
+    random_seed: int = 13
+    allow_reuse: bool = True
+    narrator_gender: str = "unknown"
+    max_examples_per_character: int = 6
+    gender_window_size: int = 20
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig
     asr: ASRConfig
@@ -126,6 +137,7 @@ class AppConfig:
     text_dub: TextDubConfig
     translation: TranslationConfig
     tts: TTSConfig
+    voice_assign: VoiceAssignConfig
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -155,6 +167,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
     text_dub = _get(data, "text_dub", {})
     translation = _get(data, "translation", {})
     tts = _get(data, "tts", {})
+    voice_assign = _get(data, "voice_assign", {})
 
     tts_http = _get(tts, "http")
     tts_cli = _get(tts, "cli")
@@ -228,6 +241,7 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
             mode=str(_get(translation, "mode", "per_segment")),
             window_size=int(_get(translation, "window_size", 12)),
             window_overlap=int(_get(translation, "window_overlap", 4)),
+            enabled=bool(_get(translation, "enabled", True)),
         ),
         tts=TTSConfig(
             mode=str(_get(tts, "mode", "http")),
@@ -240,6 +254,14 @@ def load_config(path: Optional[Path] = None) -> AppConfig:
             cli=TTSCLIConfig(command_template=str(_get(tts_cli or {}, "command_template", "")))
             if tts_cli
             else None,
+        ),
+        voice_assign=VoiceAssignConfig(
+            catalog_path=str(_get(voice_assign, "catalog_path", "voices/catalog.yaml")),
+            random_seed=int(_get(voice_assign, "random_seed", 13)),
+            allow_reuse=bool(_get(voice_assign, "allow_reuse", True)),
+            narrator_gender=str(_get(voice_assign, "narrator_gender", "unknown")),
+            max_examples_per_character=int(_get(voice_assign, "max_examples_per_character", 6)),
+            gender_window_size=int(_get(voice_assign, "gender_window_size", 20)),
         ),
     )
 

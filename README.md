@@ -18,6 +18,24 @@ Text only (manual voice map):
 novel_dubber text-dub --text novel.txt --voice-map voice_map.json --target-lang en --out outdir
 ```
 
+Text only (auto voice map from samples):
+
+```bash
+novel_dubber text-analyze --text novel.txt --out workdir
+novel_dubber text-discover-characters --workdir workdir --out workdir
+novel_dubber text-label --workdir workdir --out workdir
+novel_dubber text-assign-voices --workdir workdir --out workdir
+novel_dubber audio-dub --workdir workdir --target-lang en --out outdir
+```
+
+Text only, no translation (use source language for TTS):
+
+```bash
+novel_dubber run-text --text novel.txt --target-lang ja --workdir workdir --no-translate
+```
+
+You can also add `--no-translate` to `text-dub` or `audio-dub`.
+
 Text + audio alignment (auto voice map):
 
 ```bash
@@ -25,6 +43,8 @@ novel_dubber run-text --text novel.txt --audio audiobook.mp3 --workdir workdir -
 ```
 
 Alignment finds the best text offset to match the audio start, then aligns with word-level timestamps.
+
+If you omit `--audio`, `run-text` will auto-assign voices from `voices/catalog.yaml`.
 
 Voice map schema:
 
@@ -46,6 +66,18 @@ Auto-generated voice map (from aligned audio):
 }
 ```
 
+Auto-generated voice map (no audio, from samples):
+
+```json
+{
+  "CharacterA": {
+    "refs": [{"audio": "/abs/path/to/voices/samples/12_oral5.wav", "text": "..."}],
+    "gender": "female",
+    "voice_id": "12"
+  }
+}
+```
+
 ## Workdir layout (cache/resume)
 
 - `chunks/` audio chunks + `manifest.json`
@@ -61,7 +93,8 @@ Auto-generated voice map (from aligned audio):
 - `aligned_labeled_segments.jsonl` labeled + alignment merged (for voice refs)
 - `voice_map.json` + `voice_map/<character>/ref_###.wav`
 - `translated_segments.jsonl`
-- `tts_segments/seg_####.wav`
+- `tts_segments/group_*.wav`
+- `tts_segments/tts_groups.jsonl`
 - `final_audio.wav` + `final_audio.mp3`
 
 ## Config
@@ -74,6 +107,8 @@ Key settings:
 - `tts.mode` (`http` or `cli`) and adapter config
 - `character_discovery.window_size`, `labeling.character_list_path`
 - `alignment.search_window`, `alignment.max_combine`, `alignment.min_score`, `alignment.use_kana`, `alignment.offset_window_segments`
+- `voice_assign.catalog_path`, `voice_assign.gender_window_size`
+- `translation.enabled` (set false to skip LLM translation)
 
 The LLM API key is read from the environment variable specified in `llm.api_key_env`.
 
@@ -105,6 +140,16 @@ Text-only (manual voice map):
 
 ```bash
 novel_dubber text-dub --text novel.txt --voice-map voice_map.json --target-lang en --out outdir
+```
+
+Text-only (auto voice map from samples):
+
+```bash
+novel_dubber text-analyze --text novel.txt --out workdir
+novel_dubber text-discover-characters --workdir workdir --out workdir
+novel_dubber text-label --workdir workdir --out workdir
+novel_dubber text-assign-voices --workdir workdir --out workdir
+novel_dubber audio-dub --workdir workdir --target-lang en --out outdir
 ```
 
 Audio-only (legacy flow):
@@ -139,6 +184,25 @@ Times must be in seconds relative to the input chunk audio.
 ### GPT-SoVITS
 - **HTTP mode** expects a WAV response or JSON containing `audio_path` or `audio_base64`.
 - **CLI mode** uses `tts.cli.command_template` with placeholders `{text_file}`, `{ref_audio}`, `{ref_text}`, `{out}`, `{target_lang}`.
+- **TTS grouping**: consecutive segments with the same character are merged into a single TTS request. Group metadata is saved to `tts_segments/tts_groups.jsonl` and used by stitching.
+
+## Voice catalog (no audiobook)
+
+`voices/catalog.yaml` lists available reference samples and metadata. Example:
+
+```yaml
+default_ref_text: "..."
+samples:
+  - id: "12"
+    name: "n12"
+    audio: "samples/12_oral5.wav"
+    gender: "female"
+    locale: "zh-CN"
+```
+
+`text-assign-voices` will infer character genders from labeled text and randomly assign
+matching voices. If the catalog is missing, it will be generated from
+`voices/source/gpt-sovits/` (or legacy `voices/gpt-sovits/`) plus `voices/samples/`.
 
 ## Smoke tests
 

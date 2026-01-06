@@ -50,6 +50,11 @@ def stitch_segments(
     config: AppConfig,
 ) -> Path:
     segments = read_jsonl(segments_path)
+    groups_path = tts_dir / "tts_groups.jsonl"
+    if groups_path.exists():
+        groups = read_jsonl(groups_path)
+        if groups:
+            segments = groups
     if not segments:
         raise RuntimeError("No segments to stitch")
 
@@ -68,7 +73,7 @@ def stitch_segments(
         wf_out.setframerate(config.audio.sample_rate)
 
         for idx, seg in enumerate(tqdm(segments, desc="Stitching", unit="segment")):
-            seg_id = str(seg.get("segment_id"))
+            seg_id = str(seg.get("group_id") or seg.get("segment_id"))
             in_path = tts_dir / f"{seg_id}.wav"
             if not in_path.exists():
                 logger.warning("Missing TTS segment: %s", in_path)

@@ -51,10 +51,18 @@ alignment:
 
 voice_refs:
   min_sec: 3.0
-  max_sec: 10.0
+  max_sec: 30.0
   preferred_min_sec: 5.0
-  preferred_max_sec: 9.0
+  preferred_max_sec: 15.0
   max_refs_per_character: 3
+
+voice_assign:
+  catalog_path: "voices/catalog.yaml"
+  random_seed: 13
+  allow_reuse: true
+  narrator_gender: "unknown"
+  max_examples_per_character: 6
+  gender_window_size: 20
 
 text_dub:
   default_pause_sec: 0.5
@@ -70,6 +78,7 @@ translation:
   mode: "windowed"
   window_size: 56
   window_overlap: 20
+  enabled: true
 
 
 tts:
@@ -81,6 +90,6 @@ tts:
       text_lang: "{target_lang}"
       ref_audio_path: "{ref_audio}"
       prompt_text: "{ref_text}"
-      prompt_lang: "ja"
+      prompt_lang: "zh"
   cli:
     command_template: "gpt_sovits_cli --text-file {text_file} --ref-audio {ref_audio} --ref-text {ref_text} --out {out} --lang {target_lang}"

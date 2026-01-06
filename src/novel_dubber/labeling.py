@@ -7,7 +7,7 @@ from tqdm import tqdm
 from .config import AppConfig
 from .llm_client import call_llm_json
 from .logging_utils import get_logger
-from .utils import append_jsonl, read_json, read_jsonl
+from .utils import append_jsonl, read_json, read_jsonl, write_jsonl
 
 
 logger = get_logger(__name__)
@@ -168,7 +168,7 @@ def _label_segments_per_segment(
     segments = read_jsonl(segments_path)
     labeled_existing = read_jsonl(out_path) if out_path.exists() else []
     processed_ids = {seg.get("segment_id") for seg in labeled_existing}
-    results: List[Dict[str, object]] = []
+    errors_path = out_path.with_name("labeling_errors.jsonl")
     allowed_characters, alias_map = _load_character_list(
         segments_path, config, override_path=character_list_path
     )
@@ -208,7 +208,12 @@ def _label_segments_per_segment(
             },
         ]
 
-        llm_out = call_llm_json(config, messages)
+        try:
+            llm_out = call_llm_json(config, messages)
+        except Exception as exc:
+            logger.warning("Labeling failed for %s: %s", seg_id, exc)
+            append_jsonl(errors_path, [{"segment_id": seg_id, "error": str(exc)}])
+            continue
         role_type = str(llm_out.get("role_type", "NARRATION")).upper()
         character = str(llm_out.get("character", "")).strip()
         if not character:
@@ -228,15 +233,13 @@ def _label_segments_per_segment(
                 "character": norm["character"],
             }
         )
-        results.append(out)
+        append_jsonl(out_path, [out])
+        processed_ids.add(seg_id)
         if out["character"] not in ("UNKNOWN", "NARRATOR", ""):
             known_characters.add(out["character"])
 
-    if results:
-        append_jsonl(out_path, results)
-    else:
-        if not out_path.exists():
-            out_path.touch()
+    if not out_path.exists():
+        out_path.touch()
     return out_path
 
 
@@ -249,6 +252,7 @@ def _label_segments_windowed(
     segments = read_jsonl(segments_path)
     labeled_existing = read_jsonl(out_path) if out_path.exists() else []
     labeled_map = {str(seg.get("segment_id")): seg for seg in labeled_existing}
+    errors_path = out_path.with_name("labeling_errors.jsonl")
 
     allowed_characters, alias_map = _load_character_list(
         segments_path, config, override_path=character_list_path
@@ -273,6 +277,8 @@ def _label_segments_windowed(
     ):
         window = segments[start : start + config.labeling.window_size]
         if not window:
+            continue
+        if _window_done(window, labeled_map):
             continue
 
         recent_context: List[Dict[str, str]] = []
@@ -312,11 +318,26 @@ def _label_segments_windowed(
             },
         ]
 
-        llm_out = call_llm_json(config, messages)
+        try:
+            llm_out = call_llm_json(config, messages)
+        except Exception as exc:
+            logger.warning("Labeling window failed at %s: %s", start, exc)
+            append_jsonl(
+                errors_path,
+                [
+                    {
+                        "window_start": start,
+                        "segment_ids": [seg.get("segment_id") for seg in window],
+                        "error": str(exc),
+                    }
+                ],
+            )
+            continue
         items = llm_out.get("segments", [])
         if not isinstance(items, list):
             items = []
 
+        updated_any = False
         for item in items:
             seg_id = str(item.get("segment_id", ""))
             if not seg_id:
@@ -354,31 +375,28 @@ def _label_segments_windowed(
                     }
                 )
                 labeled_map[seg_id] = out
+                updated_any = True
                 if out["character"] not in ("UNKNOWN", "NARRATOR", ""):
                     known_characters.add(out["character"])
 
-    # Fill any remaining segments as UNKNOWN for completeness.
-    ordered: List[Dict[str, object]] = []
-    for seg in segments:
-        seg_id = str(seg.get("segment_id"))
-        labeled = labeled_map.get(seg_id)
-        if labeled is None:
-            labeled = dict(seg)
-            labeled.update(
-                {
-                    "role_type": "NARRATION",
-                    "character": "UNKNOWN",
-                }
-            )
-        ordered.append(labeled)
+        if updated_any or not out_path.exists():
+            ordered: List[Dict[str, object]] = []
+            for seg in segments:
+                seg_id = str(seg.get("segment_id"))
+                labeled = labeled_map.get(seg_id)
+                if labeled is None:
+                    labeled = dict(seg)
+                    labeled.update(
+                        {
+                            "role_type": "NARRATION",
+                            "character": "UNKNOWN",
+                        }
+                    )
+                ordered.append(labeled)
+            write_jsonl(out_path, ordered)
 
-    if ordered:
-        from .utils import write_jsonl
-
-        write_jsonl(out_path, ordered)
-    else:
-        if not out_path.exists():
-            out_path.touch()
+    if not out_path.exists():
+        out_path.touch()
     return out_path
 
 
@@ -391,3 +409,18 @@ def label_segments(
     if config.labeling.mode.lower() == "windowed":
         return _label_segments_windowed(segments_path, out_path, config, character_list_path)
     return _label_segments_per_segment(segments_path, out_path, config, character_list_path)
+
+
+def _window_done(window: List[Dict[str, object]], labeled_map: Dict[str, Dict[str, object]]) -> bool:
+    for seg in window:
+        seg_id = str(seg.get("segment_id"))
+        labeled = labeled_map.get(seg_id)
+        if not labeled:
+            return False
+        role = str(labeled.get("role_type", "")).upper()
+        character = str(labeled.get("character", "")).strip()
+        if role not in ("NARRATION", "DIALOGUE"):
+            return False
+        if character in ("", "UNKNOWN"):
+            return False
+    return True

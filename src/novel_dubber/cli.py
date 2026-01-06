@@ -16,6 +16,7 @@ from .stitch import stitch_segments
 from .text_mode import build_text_segments
 from .translation import translate_segments
 from .tts import synthesize_segments
+from .voice_assign import assign_voices_from_text
 from .voice_refs import extract_voice_refs
 
 
@@ -155,15 +156,37 @@ def text_dump_voices(
     extract_voice_refs(merged, workdir / "audio.wav", out, cfg)
 
 
+@app.command("text-assign-voices")
+def text_assign_voices(
+    workdir: Path = typer.Option(..., help="Workdir with labeled_segments.jsonl"),
+    out: Path = typer.Option(..., help="Output workdir"),
+    config: Optional[Path] = typer.Option(None, help="Path to config.yaml"),
+    force: bool = typer.Option(False, help="Overwrite existing voice_map.json"),
+) -> None:
+    cfg = _load_config(config)
+    _set_usage_log(cfg, out)
+    out.mkdir(parents=True, exist_ok=True)
+    assign_voices_from_text(
+        workdir / "labeled_segments.jsonl",
+        out / "voice_map.json",
+        out,
+        cfg,
+        force=force,
+    )
+
+
 @app.command("audio-dub")
 def audio_dub(
     workdir: Path = typer.Option(..., help="Workdir with labeled segments and voice map"),
     target_lang: str = typer.Option(..., help="Target language code"),
     out: Path = typer.Option(..., help="Output directory"),
+    no_translate: bool = typer.Option(False, help="Skip translation and use source text"),
     config: Optional[Path] = typer.Option(None, help="Path to config.yaml"),
 ) -> None:
     cfg = _load_config(config)
     _set_usage_log(cfg, workdir)
+    if no_translate:
+        cfg.translation.enabled = False
     out.mkdir(parents=True, exist_ok=True)
     translated = translate_segments(
         workdir / "labeled_segments.jsonl",
@@ -182,10 +205,13 @@ def text_dub(
     voice_map: Path = typer.Option(..., help="Voice mapping JSON"),
     target_lang: str = typer.Option(..., help="Target language code"),
     out: Path = typer.Option(..., help="Output directory"),
+    no_translate: bool = typer.Option(False, help="Skip translation and use source text"),
     config: Optional[Path] = typer.Option(None, help="Path to config.yaml"),
 ) -> None:
     cfg = _load_config(config)
     _set_usage_log(cfg, out)
+    if no_translate:
+        cfg.translation.enabled = False
     out.mkdir(parents=True, exist_ok=True)
     segments = build_text_segments(text, out / "text_segments.jsonl", cfg)
     labeled = label_segments(
@@ -242,10 +268,13 @@ def run_text(
     audio: Optional[Path] = typer.Option(None, help="Optional audio for alignment"),
     voice_map: Optional[Path] = typer.Option(None, help="Optional voice mapping JSON"),
     language: Optional[str] = typer.Option(None, help="Language hint (e.g. ja)"),
+    no_translate: bool = typer.Option(False, help="Skip translation and use source text"),
     config: Optional[Path] = typer.Option(None, help="Path to config.yaml"),
 ) -> None:
     cfg = _load_config(config)
     _set_usage_log(cfg, workdir)
+    if no_translate:
+        cfg.translation.enabled = False
     workdir.mkdir(parents=True, exist_ok=True)
     segments = build_text_segments(text, workdir / "text_segments.jsonl", cfg)
 
@@ -271,14 +300,23 @@ def run_text(
         voice_map_path = workdir / "voice_map.json"
     else:
         if not voice_map:
-            raise typer.BadParameter("Provide --voice-map when --audio is not set.")
-        labeled = label_segments(
-            segments,
-            workdir / "labeled_segments.jsonl",
-            cfg,
-            character_list_path=voice_map,
-        )
-        voice_map_path = voice_map
+            discover_characters(workdir / "text_segments.jsonl", workdir / "characters.json", cfg)
+            labeled = label_segments(segments, workdir / "labeled_segments.jsonl", cfg)
+            assign_voices_from_text(
+                workdir / "labeled_segments.jsonl",
+                workdir / "voice_map.json",
+                workdir,
+                cfg,
+            )
+            voice_map_path = workdir / "voice_map.json"
+        else:
+            labeled = label_segments(
+                segments,
+                workdir / "labeled_segments.jsonl",
+                cfg,
+                character_list_path=voice_map,
+            )
+            voice_map_path = voice_map
 
     translated = translate_segments(
         labeled,

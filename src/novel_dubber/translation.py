@@ -71,6 +71,25 @@ def translate_segments(
     done_ids = {seg.get("segment_id") for seg in existing}
     errors_path = out_path.with_name("translation_errors.jsonl")
 
+    if not config.translation.enabled:
+        logger.info("Translation disabled; copying source text.")
+        for seg in tqdm(segments, desc="Translate (disabled)", unit="segment"):
+            seg_id = seg.get("segment_id")
+            if seg_id in done_ids:
+                continue
+            out = dict(seg)
+            out.update(
+                {
+                    "translation": str(seg.get("text", "")),
+                    "target_lang": target_lang,
+                }
+            )
+            append_jsonl(out_path, [out])
+            done_ids.add(seg_id)
+        if not out_path.exists():
+            out_path.touch()
+        return out_path
+
     glossary = None
     if config.translation.glossary_path:
         glossary_path = Path(config.translation.glossary_path)

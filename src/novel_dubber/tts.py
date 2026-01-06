@@ -13,12 +13,20 @@ from tqdm import tqdm
 
 from .config import AppConfig
 from .logging_utils import get_logger
-from .utils import ensure_dir, format_command, normalize_path, read_json, read_jsonl, run_command
+from .utils import (
+    ensure_dir,
+    format_command,
+    normalize_path,
+    read_json,
+    read_jsonl,
+    run_command,
+    write_jsonl,
+)
 
 
 logger = get_logger(__name__)
 _REF_MIN_SEC = 3.0
-_REF_MAX_SEC = 10.0
+_REF_MAX_SEC = 30.0
 _REF_TARGET_SEC = 6.0
 _TTS_RETRIES = 3
 
@@ -59,6 +67,8 @@ def _trim_ref_audio(
     out = cache_dir / f"ref_trim_{digest}.wav"
     if out.exists():
         return str(out)
+    if out.exists():
+        return str(out)
     cmd = [
         "ffmpeg",
         "-y",
@@ -74,6 +84,7 @@ def _trim_ref_audio(
     ]
     run_command(cmd)
     return str(out)
+
 
 
 def _select_ref(refs: List[Dict[str, str]], cache_dir: Path) -> Tuple[str, str]:
@@ -213,7 +224,7 @@ def _log_tts_error(out_dir: Path, seg: Dict[str, object], ref_audio: str, ref_te
         log_path,
         [
             {
-                "segment_id": seg.get("segment_id"),
+                "segment_id": seg.get("segment_id") or seg.get("group_id"),
                 "character": seg.get("character"),
                 "text": str(seg.get("translation", seg.get("text", "")))[:500],
                 "ref_audio": ref_audio,
@@ -242,6 +253,74 @@ def _sanitize_tts_text(text: str) -> str:
     for src, dst in replacements.items():
         out = out.replace(src, dst)
     return " ".join(out.split())
+
+
+def _build_tts_groups(segments: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    groups: List[Dict[str, object]] = []
+    current: Optional[Dict[str, object]] = None
+
+    def _flush() -> None:
+        nonlocal current
+        if current is None:
+            return
+        groups.append(current)
+        current = None
+
+    for seg in segments:
+        seg_id = str(seg.get("segment_id"))
+        character = str(seg.get("character", "NARRATOR"))
+        raw_text = str(seg.get("translation", seg.get("text", ""))).strip()
+        start = seg.get("start")
+        end = seg.get("end")
+        text_index = seg.get("text_index")
+
+        if not raw_text or not _has_spoken_content(raw_text):
+            _flush()
+            solo: Dict[str, object] = {
+                "group_id": f"group_{seg_id}",
+                "segment_ids": [seg_id],
+                "character": character,
+                "text": raw_text,
+            }
+            if start is not None:
+                solo["start"] = start
+            if end is not None:
+                solo["end"] = end
+            if text_index is not None:
+                solo["text_index"] = text_index
+            groups.append(solo)
+            continue
+
+        if current and current.get("character") == character:
+            current["segment_ids"].append(seg_id)
+            current["texts"].append(raw_text)
+            if start is not None and current.get("start") is None:
+                current["start"] = start
+            if end is not None:
+                current["end"] = end
+            continue
+
+        _flush()
+        current = {
+            "group_id": f"group_{seg_id}",
+            "segment_ids": [seg_id],
+            "character": character,
+            "texts": [raw_text],
+        }
+        if start is not None:
+            current["start"] = start
+        if end is not None:
+            current["end"] = end
+        if text_index is not None:
+            current["text_index"] = text_index
+
+    _flush()
+
+    for group in groups:
+        texts = group.pop("texts", None)
+        if isinstance(texts, list):
+            group["text"] = "\n".join(texts)
+    return groups
 
 
 def _infer_silence_duration(seg: Dict[str, object], config: AppConfig) -> float:
@@ -287,14 +366,17 @@ def synthesize_segments(
     ensure_dir(out_dir)
     segments = read_jsonl(segments_path)
     voice_map = _normalize_voice_map(read_json(voice_map_path))
+    groups = _build_tts_groups(segments)
+    groups_path = out_dir / "tts_groups.jsonl"
+    write_jsonl(groups_path, groups)
 
-    for seg in tqdm(segments, desc="TTS", unit="segment"):
-        seg_id = str(seg.get("segment_id"))
+    for group in tqdm(groups, desc="TTS", unit="segment"):
+        seg_id = str(group.get("group_id"))
         out_path = out_dir / f"{seg_id}.wav"
         if out_path.exists():
             continue
 
-        character = str(seg.get("character", "NARRATOR"))
+        character = str(group.get("character", "NARRATOR"))
         refs = voice_map.get(character) or voice_map.get("NARRATOR")
         if not refs:
             logger.warning("Missing voice ref for character: %s", character)
@@ -308,20 +390,20 @@ def synthesize_segments(
         ref_audio = normalize_path(Path(ref_audio))
         if not Path(ref_audio).exists():
             err = RuntimeError(f"Ref audio not found: {ref_audio}")
-            _log_tts_error(out_dir, seg, ref_audio, ref_text, err)
+            _log_tts_error(out_dir, group, ref_audio, ref_text, err)
             _write_silence(
                 out_path,
-                _infer_silence_duration(seg, config),
+                _infer_silence_duration(group, config),
                 config.audio.sample_rate,
             )
             continue
 
-        text = str(seg.get("translation", seg.get("text", ""))).strip()
+        text = str(group.get("text", "")).strip()
         text = _sanitize_tts_text(text)
         if not text or not _has_spoken_content(text):
             _write_silence(
                 out_path,
-                _infer_silence_duration(seg, config),
+                _infer_silence_duration(group, config),
                 config.audio.sample_rate,
             )
             continue
@@ -333,22 +415,22 @@ def synthesize_segments(
                 _cli_tts(config, text, ref_audio, ref_text, target_lang, out_path)
         except Exception as exc:
             if _is_invalid_text_error(exc):
-                _log_tts_error(out_dir, seg, ref_audio, ref_text, exc)
+                _log_tts_error(out_dir, group, ref_audio, ref_text, exc)
                 _write_silence(
                     out_path,
-                    _infer_silence_duration(seg, config),
+                    _infer_silence_duration(group, config),
                     config.audio.sample_rate,
                 )
                 continue
             if _is_server_error(exc):
-                _log_tts_error(out_dir, seg, ref_audio, ref_text, exc)
+                _log_tts_error(out_dir, group, ref_audio, ref_text, exc)
                 _write_silence(
                     out_path,
-                    _infer_silence_duration(seg, config),
+                    _infer_silence_duration(group, config),
                     config.audio.sample_rate,
                 )
                 continue
-            _log_tts_error(out_dir, seg, ref_audio, ref_text, exc)
+            _log_tts_error(out_dir, group, ref_audio, ref_text, exc)
             raise
 
     return out_dir

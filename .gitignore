@@ -3,4 +3,4 @@ secret
 __pycache__/
 test.sh
 *.egg-info/
-*.wav
+output.wav
